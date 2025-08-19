@@ -1,6 +1,7 @@
 package main
 
 import (
+var activeUsers = make(map[int64]bool)
 	"fmt"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/sashabaranov/go-openai"
@@ -71,6 +72,10 @@ func main() {
 		if update.Message.IsCommand() {
 			switch update.Message.Command() {
 			case "start":
+            userID := update.Message.Chat.ID
+            activeUsers[userID] = true
+            msg := tgbotapi.NewMessage(update.Message.Chat.ID, "✅ GPT режим увімкнено. Тепер можеш писати!")
+            bot.Send(msg)
 				msgText := lang.Translate("commands.start", conf.Lang) + lang.Translate("commands.help", conf.Lang) + lang.Translate("commands.start_end", conf.Lang)
 				msg := tgbotapi.NewMessage(update.Message.Chat.ID, msgText)
 				msg.ParseMode = "HTML"
@@ -126,15 +131,30 @@ func main() {
 					bot.Send(msg)
 				}
 			}
-		} else {
-			go func(userStats *user.UsageTracker) {
-				// Handle user message
-				if userStats.HaveAccess(conf) {
-					responseID := api.HandleChatGPTStreamResponse(bot, client, update.Message, conf, userStats)
-					if conf.Model.Type == "openrouter" {
-						userStats.GetUsageFromApi(responseID, conf)
-					}
-				} else {
+} else {
+    go func(update tgbotapi.Update, userStats *user.UsageTracker) {
+        userID := update.Message.Chat.ID
+
+        if !activeUsers[userID] {
+            return
+        }
+
+        if userStats.HaveAccess(conf) {
+            responseID := api.HandleChatGPTStreamResponse(bot, client, update.Message, conf, userStats)
+
+            if conf.Model.Type == "openrouter" {
+                userStats.GetUsageFromApi(responseID, conf)
+            }
+        } else {
+            msg := tgbotapi.NewMessage(update.Message.Chat.ID, lang.Translate("budget_out", conf.Lang))
+            msg.ParseMode = "HTML"
+            if _, err := bot.Send(msg); err != nil {
+                log.Println(err)
+            }
+        }
+
+    }(update, userStats)
+}
 					msg := tgbotapi.NewMessage(update.Message.Chat.ID, lang.Translate("budget_out", conf.Lang))
 					_, err := bot.Send(msg)
 					if err != nil {
